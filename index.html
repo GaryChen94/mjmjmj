@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>16張麻將 - 終極對弈版 (版面優化)</title>
+    <style>
+        body { background-color: #0c5a1e; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; margin: 0; overflow: hidden; height: 100vh; }
+        
+        /* 🔥 調整 1：將桌面加大為 1000x750，給予更多空間 */
+        .game-board { position: relative; width: 1000px; height: 750px; background: #15732b; border: 8px solid #3e2723; border-radius: 10px; margin-top: 10px; box-shadow: inset 0 0 50px rgba(0,0,0,0.5); }
+        
+        .mj-card { width: 30px; height: 44px; background: white; color: black; border: 1px solid #999; border-radius: 4px; display: inline-flex; justify-content: center; align-items: center; font-weight: bold; font-size: 16px; margin: 1px; box-shadow: 1px 2px 0 #ccc; cursor: pointer; vertical-align: top; }
+        .mj-card.hidden { background: linear-gradient(135deg, #2e7d32, #1b5e20); color: transparent; cursor: default; }
+        .mj-card.discarded { width: 28px; height: 40px; font-size: 15px; cursor: default; }
+        .mj-card.exposed { background: #e0e0e0; border: 2px solid #555; cursor: default; }
+        .mj-card.ankong { background: #555; color: #aaa; border: 2px solid #333; }
+        .new-draw-style { margin-left: 20px !important; border: 2px solid #ffeb3b; background: #fffde7; transform: translateY(-5px); }
+        .color-萬 { color: #cc0000; } .color-筒 { color: #0044cc; } .color-條 { color: #007700; } .color-字 { color: #111; }
+        
+        .player-area { position: absolute; display: flex; justify-content: center; align-items: center; width: 100%; }
+        
+        /* 🔥 調整 2：把左右兩家往外推，並確保玩家手牌層級在最上層 */
+        .south { bottom: 15px; z-index: 20; } 
+        .north { top: 15px; transform: rotate(180deg); }
+        .east { right: -400px; top: 50%; transform: rotate(-90deg) translateY(-50%); }
+        .west { left: -400px; top: 50%; transform: rotate(90deg) translateY(-50%); }
+        
+        /* 🔥 調整 3：海底區加寬，讓牌可以排比較多行才換列 */
+        .pool { position: absolute; top: 20%; left: 50%; transform: translateX(-50%); width: 480px; height: 55%; display: flex; flex-wrap: wrap; align-content: flex-start; padding: 5px; gap: 2px; z-index: 10; }
+        
+        .action-btns { position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%); display: none; gap: 10px; z-index: 9999; }
+        .btn { padding: 8px 18px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; color: black; font-size: 16px; }
+        .btn-chow-opt { background: #8bc34a; margin: 0 5px; }
+        #msg { color: #ffeb3b; font-weight: bold; margin: 5px; height: 25px; font-size: 18px; }
+        #options-layer { display: none; position: absolute; bottom: 170px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); padding: 15px; border-radius: 8px; z-index: 10000; }
+        
+        /* 🔥 調整 4：箭頭層級調到 25 (高於牌的10)，並加上半透明避免完全擋住字 */
+        #turn-arrow {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 60px;
+            height: 60px;
+            margin-top: -30px;
+            margin-left: -30px;
+            line-height: 60px;
+            text-align: center;
+            font-size: 60px;
+            color: #ffeb3b;
+            text-shadow: 0 0 20px #ff5722, 0 0 10px #ff9800;
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            z-index: 25; 
+            opacity: 0.85; 
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<div style="margin: 10px; display: flex; gap: 20px; align-items: center;">
+    <div id="msg">載入中...</div>
+    <div id="ting-info" style="background: rgba(0,0,0,0.3); padding: 5px 15px; border-radius: 4px;">未聽牌</div>
+    <button class="btn" style="background:#ddd;" onclick="location.reload()">重新開始</button>
+</div>
+
+<div class="game-board">
+    <div id="p2-hand" class="player-area north"></div>
+    <div id="p1-hand" class="player-area east"></div>
+    <div id="p3-hand" class="player-area west"></div>
+    
+    <div id="turn-arrow">⬆</div>
+    
+    <div id="pool" class="pool"></div>
+    <div id="p0-hand" class="player-area south"></div>
+    
+    <div id="options-layer"></div>
+    
+    <div id="action-layer" class="action-btns">
+        <button class="btn" id="btn-win" onclick="doAction('WIN')" style="background:#f44336; color:white;">胡</button>
+        <button class="btn" id="btn-kong" onclick="handleKongClick()" style="background:#ff9800; color:white;">槓</button>
+        <button class="btn" id="btn-pong" onclick="doAction('PONG')" style="background:#2196f3; color:white;">碰</button>
+        <button class="btn" id="btn-chow" onclick="showChowOptions()" style="background:#4caf50; color:white;">吃</button>
+        <button class="btn" onclick="doAction('SKIP')" style="background:#9e9e9e; color:white;">過</button>
+    </div>
+</div>
+
+<script>
+    // 麻將邏輯沒有更動，沿用原本的程式碼
+    const types = ['萬', '筒', '條', '東', '南', '西', '北', '中', '發', '白'];
+    const allRef = [];
+    for(let i=0; i<3; i++) for(let n=1; n<=9; n++) allRef.push(n+types[i]);
+    for(let i=3; i<types.length; i++) allRef.push(types[i]);
+
+    let gDeck = [], gHands = [[], [], [], []], gExposed = [[], [], [], []], gPool = [];
+    let gTurn = 0, gCanDiscard = false, gPlayerNewCard = "", gGameOver = false;
+    let gPendingChowCombos = [], gPendingKongs = [];
+    let gLastDiscardTile = "";
+    let gResumeState = null;
+
+    function init() {
+        gDeck = [];
+        for(let i=0; i<3; i++) for(let n=1; n<=9; n++) for(let c=0; c<4; c++) gDeck.push(n+types[i]);
+        for(let i=3; i<types.length; i++) for(let c=0; c<4; c++) gDeck.push(types[i]);
+        gDeck.sort(() => Math.random() - 0.5);
+        for(let i=0; i<16; i++) for(let p=0; p<4; p++) gHands[p].push(gDeck.pop().toString());
+        gHands.forEach(h => sortHandArr(h));
+        updateUI();
+        updateMsg("遊戲開始，等待摸牌...");
+        setTimeout(drawPhase, 600);
+    }
+
+    function getV(s) {
+        if (!s) return 0;
+        let str = s.toString().replace('暗','');
+        const type = str.slice(-1);
+        const num = parseInt(str) || 0;
+        return types.indexOf(type) * 100 + (num === 0 ? 10 : num);
+    }
+
+    function sortHandArr(arr) { arr.sort((a, b) => getV(a) - getV(b)); }
+
+    function checkHu(hand) {
+        if (hand.length % 3 !== 2) return false;
+        let s = [...hand].sort((a,b)=>getV(a)-getV(b));
+        let candidates = [...new Set(s)];
+        for (let c of candidates) {
+            let count = s.filter(x => x === c).length;
+            if (count >= 2) {
+                let r = [...s];
+                r.splice(r.indexOf(c), 1);
+                r.splice(r.indexOf(c), 1);
+                if (canDecompose(r)) return true;
+            }
+        }
+        return false;
+    }
+
+    function canDecompose(cards) {
+        if (cards.length === 0) return true;
+        let first = cards[0];
+        let sameIdxs = [];
+        cards.forEach((c, i) => { if(c === first) sameIdxs.push(i); });
+        if (sameIdxs.length >= 3) {
+            let next = [...cards];
+            next.splice(sameIdxs[2], 1); next.splice(sameIdxs[1], 1); next.splice(sameIdxs[0], 1);
+            if (canDecompose(next)) return true;
+        }
+        let n = parseInt(first), t = first.toString().slice(-1);
+        if (!isNaN(n) && n <= 7) {
+            let c2 = (n+1)+t, c3 = (n+2)+t;
+            let i2 = cards.indexOf(c2), i3 = cards.indexOf(c3);
+            if (i2 !== -1 && i3 !== -1) {
+                let next = [...cards];
+                next.splice(i3, 1); next.splice(i2, 1); next.splice(0, 1);
+                if (canDecompose(next)) return true;
+            }
+        }
+        return false;
+    }
+
+    function getCardScore(hand, card, counts) {
+        let n = parseInt(card);
+        let type = card.slice(-1);
+        let score = 0;
+        if (isNaN(n)) score -= 15;
+        else if (n === 1 || n === 9) score -= 5;
+        else score += (4 - Math.abs(5 - n));
+        if (counts[card] >= 3) score += 100;
+        else if (counts[card] === 2) score += 30; 
+        if (!isNaN(n)) {
+            let m1 = hand.includes((n-1)+type); 
+            let p1 = hand.includes((n+1)+type); 
+            let m2 = hand.includes((n-2)+type); 
+            let p2 = hand.includes((n+2)+type); 
+            if (m1 && p1) score += 45; 
+            else if (m1 || p1) score += 25; 
+            else if (m2 || p2) score += 10; 
+        }
+        return score;
+    }
+
+    function getBestDiscardIdx(hand) {
+        let counts = {};
+        hand.forEach(c => counts[c] = (counts[c] || 0) + 1);
+        let minScore = Infinity;
+        let candidates = [];
+        hand.forEach((card, i) => {
+            let s = getCardScore(hand, card, counts);
+            if (s < minScore) { minScore = s; candidates = [i]; }
+            else if (s === minScore) { candidates.push(i); }
+        });
+        return candidates[Math.floor(Math.random() * candidates.length)];
+    }
+
+    function checkCpuActions(discardedTile, discarderIdx) {
+        for (let i = 1; i <= 3; i++) {
+            let p = (discarderIdx + i) % 4;
+            if (p === 0 || p === discarderIdx) continue; 
+            let h = gHands[p];
+            let count = h.filter(c => c === discardedTile).length;
+            if (count >= 2) {
+                let isHonor = isNaN(parseInt(discardedTile));
+                let pongChance = isHonor ? 0.70 : 0.15;
+                if (Math.random() < pongChance) {
+                    let msg = `電腦 ${p} 執行了 ${count >= 3 ? '明槓' : '碰'}！`;
+                    updateMsg(msg);
+                    if (count >= 3) { 
+                        gPool.pop();
+                        for(let j=0; j<3; j++) h.splice(h.indexOf(discardedTile), 1);
+                        gExposed[p].push([discardedTile, discardedTile, discardedTile, discardedTile]);
+                        gTurn = p;
+                        updateUI();
+                        setTimeout(() => {
+                            if (gDeck.length === 0) return updateMsg("流局！");
+                            h.push(gDeck.pop().toString());
+                            if (checkHu(h)) return triggerGameOver(`電腦 ${p}`, "槓上開花");
+                            let bestIdx = getBestDiscardIdx(h);
+                            let cardOut = h.splice(bestIdx, 1)[0];
+                            gPool.push(cardOut);
+                            sortHandArr(h);
+                            updateUI();
+                            checkPostDiscard(cardOut, p);
+                        }, 1000);
+                    } else { 
+                        gPool.pop();
+                        for(let j=0; j<2; j++) h.splice(h.indexOf(discardedTile), 1);
+                        gExposed[p].push([discardedTile, discardedTile, discardedTile]);
+                        gTurn = p;
+                        updateUI();
+                        setTimeout(() => {
+                            let bestIdx = getBestDiscardIdx(h);
+                            let cardOut = h.splice(bestIdx, 1)[0];
+                            gPool.push(cardOut);
+                            sortHandArr(h);
+                            updateUI();
+                            checkPostDiscard(cardOut, p);
+                        }, 1000);
+                    }
+                    return true; 
+                }
+            }
+        }
+
+        let nextPlayer = (discarderIdx + 1) % 4;
+        if (nextPlayer !== 0) { 
+            let h = gHands[nextPlayer];
+            let combos = getChowCombos(h, discardedTile);
+            if (combos.length > 0 && Math.random() < 0.5) {
+                let combo = combos[Math.floor(Math.random() * combos.length)]; 
+                let msg = `電腦 ${nextPlayer} 吃了牌！`;
+                updateMsg(msg);
+                gPool.pop(); 
+                for(let j=0; j<2; j++) { h.splice(h.indexOf(combo[j]), 1); }
+                let exposedSet = [combo[0], discardedTile, combo[1]];
+                sortHandArr(exposedSet);
+                gExposed[nextPlayer].push(exposedSet);
+                gTurn = nextPlayer;
+                updateUI();
+                setTimeout(() => {
+                    let bestIdx = getBestDiscardIdx(h);
+                    let cardOut = h.splice(bestIdx, 1)[0];
+                    gPool.push(cardOut);
+                    sortHandArr(h);
+                    updateUI();
+                    checkPostDiscard(cardOut, nextPlayer);
+                }, 1000);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function getChowCombos(hand, tile) {
+        let t = tile.slice(-1), n = parseInt(tile);
+        if (isNaN(n)) return []; 
+        let combos = [], has = (num) => hand.includes(num + t);
+        if (has(n-2) && has(n-1)) combos.push([ (n-2)+t, (n-1)+t ]);
+        if (has(n-1) && has(n+1)) combos.push([ (n-1)+t, (n+1)+t ]);
+        if (has(n+1) && has(n+2)) combos.push([ (n+1)+t, (n+2)+t ]);
+        return combos;
+    }
+
+    function getSelfKongs(hand, newCard, exposed) {
+        let kongs = [];
+        let fullHand = [...hand];
+        if (newCard) fullHand.push(newCard);
+        let unique = [...new Set(fullHand)];
+        unique.forEach(c => { if (fullHand.filter(x => x === c).length === 4) kongs.push({type: 'AN', card: c}); });
+        exposed.forEach(set => {
+            if (set.length === 3 && set[0] === set[1] && set[1] === set[2]) {
+                if (fullHand.includes(set[0])) kongs.push({type: 'JIA', card: set[0]});
+            }
+        });
+        return kongs;
+    }
+
+    function drawPhase() {
+        if (gGameOver) return;
+        if (gDeck.length === 0) return updateMsg("流局！");
+        gPlayerNewCard = gDeck.pop().toString();
+        gCanDiscard = true;
+        updateUI();
+        let canHu = checkHu([...gHands[0], gPlayerNewCard]);
+        gPendingKongs = getSelfKongs(gHands[0], gPlayerNewCard, gExposed[0]);
+        if (canHu || gPendingKongs.length > 0) showButtons(canHu, false, false, gPendingKongs.length > 0);
+        updateMsg("輪到你摸牌！請選一張打出。");
+    }
+
+    function playerDiscard(idx) {
+        if (!gCanDiscard || gGameOver) return;
+        document.getElementById('action-layer').style.display = 'none';
+        document.getElementById('options-layer').style.display = 'none';
+        gPendingKongs = []; gPendingChowCombos = []; gResumeState = null;
+
+        let cardToPool = (idx === -1) ? gPlayerNewCard.toString() : gHands[0].splice(idx, 1)[0];
+        if (idx !== -1 && gPlayerNewCard !== "") gHands[0].push(gPlayerNewCard.toString());
+        gPool.push(cardToPool);
+        gPlayerNewCard = ""; gCanDiscard = false;
+        sortHandArr(gHands[0]);
+        checkTing();
+        updateUI();
+        
+        checkPostDiscard(cardToPool, 0);
+    }
+
+    function checkPostDiscard(cardOut, discarderIdx) {
+        gLastDiscardTile = cardOut;
+        gResumeState = null;
+
+        let playerCanHu = false;
+        if (discarderIdx !== 0 && checkHu([...gHands[0], cardOut])) {
+            playerCanHu = true;
+        }
+
+        let cpuWhoCanHu = -1;
+        for (let p = 1; p < 4; p++) {
+            if (p === discarderIdx) continue;
+            if (checkHu([...gHands[p], cardOut])) {
+                cpuWhoCanHu = p;
+                break; 
+            }
+        }
+
+        let canP = false, canC = false, canK = false;
+        if (discarderIdx !== 0) {
+            let pCount = gHands[0].filter(c => c === cardOut).length;
+            canP = pCount >= 2;
+            canK = pCount === 3; 
+            gPendingChowCombos = (discarderIdx === 3) ? getChowCombos(gHands[0], cardOut) : [];
+            canC = gPendingChowCombos.length > 0;
+            if (canK) gPendingKongs = [{type: 'MING', card: cardOut}];
+            else gPendingKongs = [];
+        }
+
+        if (playerCanHu || canP || canC || canK) {
+            gResumeState = { cardOut, discarderIdx, cpuWhoCanHu };
+            showButtons(playerCanHu, canP, canC, canK);
+            return; 
+        }
+
+        if (cpuWhoCanHu !== -1) {
+            let loser = discarderIdx === 0 ? "玩家" : `電腦 ${discarderIdx}`;
+            return triggerGameOver(`電腦 ${cpuWhoCanHu}`, `胡牌（${loser} 放槍）`);
+        }
+
+        if (checkCpuActions(cardOut, discarderIdx)) return; 
+        
+        setTimeout(nextTurn, 600);
+    }
+
+    function nextTurn() {
+        if (gGameOver) return;
+        gTurn = (gTurn + 1) % 4;
+        updateUI();
+        if (gDeck.length === 0) return updateMsg("流局！");
+        if (gTurn === 0) setTimeout(drawPhase, 600);
+        else setTimeout(cpuPhase, 800);
+    }
+
+    function cpuPhase() {
+        if (gGameOver) return;
+        gHands[gTurn].push(gDeck.pop().toString());
+        if (checkHu(gHands[gTurn])) return triggerGameOver(`電腦 ${gTurn}`, "自摸");
+        let h = gHands[gTurn];
+        let bestIdx = getBestDiscardIdx(h);
+        let cardOut = h.splice(bestIdx, 1)[0];
+        gPool.push(cardOut.toString());
+        sortHandArr(h);
+        updateUI();
+        checkPostDiscard(cardOut, gTurn);
+    }
+
+    function showButtons(h, p, c, k) {
+        const lay = document.getElementById('action-layer');
+        lay.style.display = 'flex';
+        document.getElementById('btn-win').style.display = h ? 'inline-block' : 'none';
+        document.getElementById('btn-pong').style.display = p ? 'inline-block' : 'none';
+        document.getElementById('btn-chow').style.display = c ? 'inline-block' : 'none';
+        document.getElementById('btn-kong').style.display = k ? 'inline-block' : 'none';
+        updateMsg("你有動作可以執行！");
+    }
+
+    function handleKongClick() {
+        if (gPendingKongs.length === 1) {
+            executeKong(gPendingKongs[0]);
+        } else {
+            const optDiv = document.getElementById('options-layer');
+            optDiv.innerHTML = '<span style="color:white; margin-right:10px;">請選擇槓牌:</span>';
+            gPendingKongs.forEach(kObj => {
+                let btn = document.createElement('button');
+                btn.className = 'btn btn-chow-opt';
+                let typeName = kObj.type === 'AN' ? '暗槓 ' : kObj.type === 'JIA' ? '加槓 ' : '明槓 ';
+                btn.innerText = typeName + kObj.card;
+                btn.onclick = () => { optDiv.style.display = 'none'; executeKong(kObj); };
+                optDiv.appendChild(btn);
+            });
+            optDiv.style.display = 'block';
+            document.getElementById('action-layer').style.display = 'none';
+        }
+    }
+
+    function executeKong(kObj) {
+        gResumeState = null;
+        let card = kObj.card;
+        let removeCards = (c, count) => {
+            let removed = 0;
+            if (gPlayerNewCard === c && removed < count) { gPlayerNewCard = ""; removed++; }
+            for (let i = gHands[0].length - 1; i >= 0 && removed < count; i--) {
+                if (gHands[0][i] === c) { gHands[0].splice(i, 1); removed++; }
+            }
+        };
+        if (kObj.type === 'MING') {
+            let target = gPool.pop().toString();
+            removeCards(target, 3);
+            gExposed[0].push([target, target, target, target]);
+            gTurn = 0;
+        } else if (kObj.type === 'AN') {
+            removeCards(card, 4);
+            gExposed[0].push(['暗'+card, '暗'+card, '暗'+card, '暗'+card]); 
+        } else if (kObj.type === 'JIA') {
+            removeCards(card, 1);
+            let set = gExposed[0].find(s => s.length === 3 && s[0] === card);
+            if (set) set.push(card);
+        }
+        document.getElementById('action-layer').style.display = 'none';
+        if (gDeck.length === 0) return updateMsg("流局！");
+        gPlayerNewCard = gDeck.pop().toString();
+        gCanDiscard = true;
+        updateUI();
+        updateMsg("槓牌補牌！請打出一張牌");
+        let canHu = checkHu([...gHands[0], gPlayerNewCard]);
+        gPendingKongs = getSelfKongs(gHands[0], gPlayerNewCard, gExposed[0]);
+        if (canHu || gPendingKongs.length > 0) {
+            showButtons(canHu, false, false, gPendingKongs.length > 0);
+        }
+    }
+
+    function showChowOptions() {
+        if (gPendingChowCombos.length === 1) {
+            executeChow(gPendingChowCombos[0]);
+        } else {
+            const optDiv = document.getElementById('options-layer');
+            optDiv.innerHTML = '<span style="color:white; margin-right:10px;">請選擇吃牌組合:</span>';
+            gPendingChowCombos.forEach((combo) => {
+                let btn = document.createElement('button');
+                btn.className = 'btn btn-chow-opt';
+                btn.innerText = combo.join(' + ');
+                btn.onclick = () => { optDiv.style.display = 'none'; executeChow(combo); };
+                optDiv.appendChild(btn);
+            });
+            optDiv.style.display = 'block';
+            document.getElementById('action-layer').style.display = 'none';
+        }
+    }
+
+    function executeChow(combo) {
+        gResumeState = null;
+        let target = gPool.pop().toString();
+        for(let i=0; i<2; i++) {
+            let idx = gHands[0].indexOf(combo[i]);
+            if(idx !== -1) gHands[0].splice(idx, 1);
+        }
+        let exposedSet = [combo[0], target, combo[1]];
+        sortHandArr(exposedSet);
+        gExposed[0].push(exposedSet);
+        gTurn = 0; gCanDiscard = true; gPlayerNewCard = "";
+        document.getElementById('action-layer').style.display = 'none';
+        updateUI();
+        updateMsg("你吃了牌，請打出一張牌。");
+    }
+
+    function doAction(act) {
+        document.getElementById('action-layer').style.display = 'none';
+        document.getElementById('options-layer').style.display = 'none';
+        
+        if (act === 'SKIP') {
+            if (gTurn === 0 && gCanDiscard) {
+                updateMsg("你放棄了動作，請選一張牌打出。");
+                return;
+            } else {
+                updateMsg("你選擇了過牌。");
+                if (gResumeState) {
+                    let { cardOut, discarderIdx, cpuWhoCanHu } = gResumeState;
+                    gResumeState = null; 
+                    
+                    if (cpuWhoCanHu !== -1) {
+                        let loser = discarderIdx === 0 ? "玩家" : `電腦 ${discarderIdx}`;
+                        return triggerGameOver(`電腦 ${cpuWhoCanHu}`, `胡牌（${loser} 放槍）`);
+                    }
+                    if (checkCpuActions(cardOut, discarderIdx)) return;
+                }
+                return setTimeout(nextTurn, 400);
+            }
+        }
+        
+        if (act === 'WIN') {
+            let isSelfDraw = (gTurn === 0 && gCanDiscard);
+            return triggerGameOver("玩家", isSelfDraw ? "自摸" : "胡牌");
+        }
+        
+        if (act === 'PONG') {
+            gResumeState = null;
+            let target = gPool.pop().toString();
+            let count = 0;
+            for(let i=gHands[0].length-1; i>=0; i--){
+                if(gHands[0][i] === target && count < 2) { gHands[0].splice(i, 1); count++; }
+            }
+            gExposed[0].push([target, target, target]);
+            gTurn = 0; gCanDiscard = true; gPlayerNewCard = "";
+            updateUI();
+            updateMsg("你碰了牌，請打出一張牌。");
+        }
+    }
+
+    function triggerGameOver(winner, type) {
+        gGameOver = true;
+        updateMsg(`${winner} ${type}！遊戲結束。`);
+        updateUI(); 
+        setTimeout(() => alert(`${winner} ${type}！\n請點擊上方的「重新開始」進行下一局。`), 100);
+    }
+
+    function updateUI() {
+        for (let p = 0; p < 4; p++) {
+            const area = document.getElementById(`p${p}-hand`);
+            area.innerHTML = '';
+            gExposed[p].forEach(set => {
+                let g = document.createElement('span'); g.style.marginRight="8px";
+                set.forEach(c => {
+                    let d = document.createElement('div'); 
+                    let isAnkong = c.toString().startsWith('暗');
+                    let displayStr = isAnkong ? (p === 0 || gGameOver ? c.replace('暗','') : '🀫') : c;
+                    d.className = `mj-card exposed ${isAnkong ? 'ankong' : 'color-'+c.toString().slice(-1)}`; 
+                    d.innerText = displayStr;
+                    g.appendChild(d);
+                });
+                area.appendChild(g);
+            });
+            gHands[p].forEach((card, i) => {
+                if (!card) return;
+                const div = document.createElement('div');
+                const s = card.toString();
+                let isVisible = (p === 0 || gGameOver);
+                div.className = `mj-card ${isVisible ? 'color-'+s.slice(-1) : 'hidden'}`;
+                div.innerText = isVisible ? s : '';
+                if (p === 0 && gCanDiscard && !gGameOver) div.onclick = () => playerDiscard(i);
+                area.appendChild(div);
+            });
+            if (p === 0 && gPlayerNewCard !== "") {
+                const div = document.createElement('div');
+                const s = gPlayerNewCard.toString();
+                div.className = `mj-card new-draw-style color-${s.slice(-1)}`;
+                div.innerText = s;
+                if (gCanDiscard && !gGameOver) div.onclick = () => playerDiscard(-1);
+                area.appendChild(div);
+            }
+        }
+        const pDiv = document.getElementById('pool'); pDiv.innerHTML = '';
+        gPool.forEach(c => {
+            const d = document.createElement('div'); d.className = `mj-card discarded color-${c.toString().slice(-1)}`; d.innerText = c; pDiv.appendChild(d);
+        });
+        
+        const arrow = document.getElementById('turn-arrow');
+        let deg = 0;
+        if (gTurn === 0) deg = 180;      
+        else if (gTurn === 1) deg = 90;  
+        else if (gTurn === 2) deg = 0;   
+        else if (gTurn === 3) deg = -90; 
+        arrow.style.transform = `rotate(${deg}deg)`;
+    }
+
+    function checkTing() {
+        let tings = [];
+        allRef.forEach(c => { if(checkHu([...gHands[0], c])) tings.push(c); });
+        document.getElementById('ting-info').innerText = tings.length > 0 ? "聽：" + tings.join(', ') : "未聽牌";
+    }
+
+    function updateMsg(m) { document.getElementById('msg').innerText = m; }
+    
+    init();
+</script>
+</body>
+</html>
